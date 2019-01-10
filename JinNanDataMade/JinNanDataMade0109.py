@@ -29,15 +29,6 @@ train = pd.read_csv('datalab/7955/jinnan_round1_train_20181227.csv', encoding = 
 test  = pd.read_csv('datalab/7955/jinnan_round1_testA_20181227.csv', encoding = 'gb18030')
 
 stats = []
-for col in train.columns:
-    stats.append((col, train[col].nunique(), train[col].isnull().sum() * 100 / train.shape[0],
-                  train[col].value_counts(normalize=True, dropna=False).values[0] * 100, train[col].dtype))
-
-stats_df = pd.DataFrame(stats, columns=['Feature', 'Unique_values', 'Percentage of missing values',
-                                        'Percentage of values in the biggest category', 'type'])
-stats_df.sort_values('Percentage of missing values', ascending=False)[:10]
-
-stats = []
 for col in test.columns:
     stats.append((col, test[col].nunique(), test[col].isnull().sum() * 100 / test.shape[0],
                   test[col].value_counts(normalize=True, dropna=False).values[0] * 100, test[col].dtype))
@@ -64,7 +55,7 @@ plt.show()
 for df in [train, test]:
     df.drop(['B3', 'B13', 'A13', 'A18', 'A23'], axis=1, inplace=True)
 
-# 删除缺失率超过90%的列
+# 删除某一类别占比超过90%的列
 good_cols = list(train.columns)
 for col in train.columns:
     rate = train[col].value_counts(normalize=True, dropna=False).values[0]
@@ -138,45 +129,56 @@ def getDuration(se):
 for f in ['A20', 'A28', 'B4', 'B9', 'B10', 'B11']:
     data[f] = data.apply(lambda df: getDuration(df[f]), axis=1)
 
-cate_columns = [f for f in data.columns if f != '样本id']
+data['样本id'] = data['样本id'].apply(lambda x: int(x.split('_')[1]))
+
+categorical_columns = [f for f in data.columns if f not in ['样本id']]
+numerical_columns = [f for f in data.columns if f not in categorical_columns]
 
 #label encoder
-for f in cate_columns:
+for f in categorical_columns:
     data[f] = data[f].map(dict(zip(data[f].unique(), range(0, data[f].nunique()))))
 train = data[:train.shape[0]]
 test  = data[train.shape[0]:]
+print(train.shape)
+print(test.shape)
 
-train['target'] = list(target)
-train.to_csv("result/train.csv", index=False)
-test.to_csv("result/test.csv", index=False)
+# train['target'] = list(target)
+train['target'] = target
 train['intTarget'] = pd.cut(train['target'], 5, labels=False)
 train = pd.get_dummies(train, columns=['intTarget'])
-li = train.columns[-5:]
-mean_features = []
-#train['target'] = target
-#train['intTarget'] = pd.cut(train['target'], 5, labels=False)
-#train = pd.get_dummies(train, columns=['intTarget'])
-#li = ['intTarget_0.0','intTarget_1.0','intTarget_2.0','intTarget_3.0','intTarget_4.0']
-
-for f1 in cate_columns:
-    rate = train[f1].value_counts(normalize=True, dropna=False).values[0]
-    if rate < 0.50:
+li = ['intTarget_0.0', 'intTarget_1.0', 'intTarget_2.0', 'intTarget_3.0', 'intTarget_4.0']
+mean_columns = []
+for f1 in categorical_columns:
+    cate_rate = train[f1].value_counts(normalize=True, dropna=False).values[0]
+    if cate_rate < 0.90:
         for f2 in li:
-            col_name = f1+"_"+f2+'_mean'
-            mean_features.append(col_name)
+            col_name = 'B14_to_' + f1 + "_" + f2 + '_mean'
+            mean_columns.append(col_name)
             order_label = train.groupby([f1])[f2].mean()
-            for df in [train, test]:
-                df[col_name] = df[f].map(order_label)
+            train[col_name] = train['B14'].map(order_label)
+            miss_rate = train[col_name].isnull().sum() * 100 / train[col_name].shape[0]
+            if miss_rate > 0:
+                train = train.drop([col_name], axis=1)
+                mean_columns.remove(col_name)
+            else:
+                test[col_name] = test['B14'].map(order_label)
 
-train.drop(li, axis=1, inplace=True)
+train.drop(li + ['target'], axis=1, inplace=True)
+print(train.shape)
+print(test.shape)
 
-train.drop(['样本id','target'], axis=1, inplace=True)
-test = test[train.columns]
-X_train = train.values
-y_train = target.values
-X_test = test.values
+X_train = train[mean_columns+numerical_columns].values
+X_test = test[mean_columns+numerical_columns].values
+# one hot
+enc = OneHotEncoder()
+for f in categorical_columns:
+    enc.fit(data[f].values.reshape(-1, 1))
+    X_train = sparse.hstack((X_train, enc.transform(train[f].values.reshape(-1, 1))), 'csr')
+    X_test = sparse.hstack((X_test, enc.transform(test[f].values.reshape(-1, 1))), 'csr')
 print(X_train.shape)
 print(X_test.shape)
+
+y_train = target.values
 
 param = {'num_leaves': 120,
          'min_data_in_leaf': 30,
@@ -211,7 +213,7 @@ for fold_, (trn_idx, val_idx) in enumerate(folds.split(X_train, y_train)):
 print("CV score: {:<8.8f}".format(mean_squared_error(oof_lgb, target)))
 
 ##### xgb
-xgb_params = {'eta': 0.001, 'max_depth': 12, 'subsample': 0.7, 'colsample_bytree': 0.7,
+xgb_params = {'eta': 0.005, 'max_depth': 10, 'subsample': 0.8, 'colsample_bytree': 0.8,
               'objective': 'reg:linear', 'eval_metric': 'rmse', 'silent': True, 'nthread': 4}
 
 folds = KFold(n_splits=5, shuffle=True, random_state=2018)
