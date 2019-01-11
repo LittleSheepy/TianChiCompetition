@@ -37,6 +37,8 @@ stats_df = pd.DataFrame(stats, columns=['Feature', 'Unique_values', 'Percentage 
                                         'Percentage of values in the biggest category', 'type'])
 stats_df.sort_values('Percentage of missing values', ascending=False)[:10]
 
+stats_df.to_csv("result/stats_df.csv", index=False)
+
 target_col = "收率"
 
 plt.figure(figsize=(8,6))
